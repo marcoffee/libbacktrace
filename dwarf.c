@@ -2039,7 +2039,7 @@ add_ranges_from_ranges (
 	base = (uintptr_t) high;
       else
 	{
-	  if (!add_range (state, rdata, 
+	  if (!add_range (state, rdata,
 			  (uintptr_t) low + base + base_address,
 			  (uintptr_t) high + base + base_address,
 			  error_callback, data, vec))
@@ -2238,7 +2238,7 @@ add_ranges (struct backtrace_state *state,
 	    const struct dwarf_sections *dwarf_sections,
 	    uintptr_t base_address, int is_bigendian,
 	    struct unit *u, uintptr_t base, const struct pcrange *pcrange,
-	    int (*add_range) (struct backtrace_state *state, void *rdata, 
+	    int (*add_range) (struct backtrace_state *state, void *rdata,
 			      uintptr_t lowpc, uintptr_t highpc,
 			      backtrace_error_callback error_callback,
 			      void *data, void *vec),
@@ -2671,6 +2671,58 @@ free_line_header (struct backtrace_state *state, struct line_header *hdr,
 		  error_callback, data);
 }
 
+static const char*
+build_abs_filename (struct backtrace_state *state,
+         const char *dir, const char *filename,
+	       backtrace_error_callback error_callback, void *data)
+{
+  if (dir == NULL || filename == NULL || IS_ABSOLUTE_PATH (filename))
+    {
+      return filename;
+    }
+
+  size_t dir_len = strlen (dir);
+  size_t filename_len = strlen (filename);
+  char *s = ((char *) backtrace_alloc (state, dir_len + filename_len + 2,
+          error_callback, data));
+  if (s == NULL)
+    {
+      return filename;
+    }
+  memcpy (s, dir, dir_len);
+  /* FIXME: If we are on a DOS-based file system, and the
+      directory or the file name use backslashes, then we
+      should use a backslash here.  */
+  s[dir_len] = '/';
+  memcpy (s + dir_len + 1, filename, filename_len + 1);
+  return s;
+}
+
+static const char*
+build_abs_filename2 (struct backtrace_state *state,
+         const char *dir1, const char* dir2, const char *filename,
+	       backtrace_error_callback error_callback, void *data)
+{
+  if (dir1 == NULL || dir2 == NULL || filename == NULL || IS_ABSOLUTE_PATH (dir2))
+    return build_abs_filename(state, dir2, filename, error_callback, data);
+
+  size_t dir1_len = strlen (dir1);
+  size_t dir2_len = strlen (dir2);
+  size_t filename_len = strlen (filename);
+  char *s = ((char *) backtrace_alloc (state, dir1_len + dir2_len + filename_len + 3,
+          error_callback, data));
+  if (s == NULL)
+    {
+      return build_abs_filename(state, dir2, filename, error_callback, data);
+    }
+  memcpy (s, dir1, dir1_len);
+  s[dir1_len] = '/';
+  memcpy (s + dir1_len + 1, dir2, dir2_len);
+  s[dir1_len + dir2_len + 1] = '/';
+  memcpy (s + dir1_len + dir2_len + 2, filename, filename_len + 1);
+  return s;
+}
+
 /* Read the directories and file names for a line header for version
    2, setting fields in HDR.  Return 1 on success, 0 on failure.  */
 
@@ -2743,7 +2795,8 @@ read_v2_paths (struct backtrace_state *state, struct unit *u,
 				     hdr_buf->data));
   if (hdr->filenames == NULL)
     return 0;
-  hdr->filenames[0] = u->filename;
+  hdr->filenames[0] = build_abs_filename(state,
+       u->comp_dir, u->filename, hdr_buf->error_callback, hdr_buf->data);
   i = 1;
   while (*hdr_buf->buf != '\0')
     {
@@ -2763,9 +2816,6 @@ read_v2_paths (struct backtrace_state *state, struct unit *u,
       else
 	{
 	  const char *dir;
-	  size_t dir_len;
-	  size_t filename_len;
-	  char *s;
 
 	  if (dir_index < hdr->dirs_count)
 	    dir = hdr->dirs[dir_index];
@@ -2777,20 +2827,8 @@ read_v2_paths (struct backtrace_state *state, struct unit *u,
 			       0);
 	      return 0;
 	    }
-	  dir_len = strlen (dir);
-	  filename_len = strlen (filename);
-	  s = ((char *) backtrace_alloc (state, dir_len + filename_len + 2,
-					 hdr_buf->error_callback,
-					 hdr_buf->data));
-	  if (s == NULL)
-	    return 0;
-	  memcpy (s, dir, dir_len);
-	  /* FIXME: If we are on a DOS-based file system, and the
-	     directory or the file name use backslashes, then we
-	     should use a backslash here.  */
-	  s[dir_len] = '/';
-	  memcpy (s + dir_len + 1, filename, filename_len + 1);
-	  hdr->filenames[i] = s;
+	  hdr->filenames[i] = build_abs_filename2(state,
+         u->comp_dir, dir, filename, hdr_buf->error_callback, hdr_buf->data);
 	}
 
       /* Ignore the modification time and size.  */
@@ -2867,25 +2905,8 @@ read_lnct (struct backtrace_state *state, struct dwarf_data *ddata,
   if (dir == NULL)
     *string = path;
   else
-    {
-      size_t dir_len;
-      size_t path_len;
-      char *s;
-
-      dir_len = strlen (dir);
-      path_len = strlen (path);
-      s = (char *) backtrace_alloc (state, dir_len + path_len + 2,
-				    hdr_buf->error_callback, hdr_buf->data);
-      if (s == NULL)
-	return 0;
-      memcpy (s, dir, dir_len);
-      /* FIXME: If we are on a DOS-based file system, and the
-	 directory or the path name use backslashes, then we should
-	 use a backslash here.  */
-      s[dir_len] = '/';
-      memcpy (s + dir_len + 1, path, path_len + 1);
-      *string = s;
-    }
+    *string = build_abs_filename(state,
+         dir, path, hdr_buf->error_callback, hdr_buf->data);
 
   return 1;
 }
@@ -3133,9 +3154,6 @@ read_line_program (struct backtrace_state *state, struct dwarf_data *ddata,
 		else
 		  {
 		    const char *dir;
-		    size_t dir_len;
-		    size_t f_len;
-		    char *p;
 
 		    if (dir_index < hdr->dirs_count)
 		      dir = hdr->dirs[dir_index];
@@ -3147,22 +3165,9 @@ read_line_program (struct backtrace_state *state, struct dwarf_data *ddata,
 					 0);
 			return 0;
 		      }
-		    dir_len = strlen (dir);
-		    f_len = strlen (f);
-		    p = ((char *)
-			 backtrace_alloc (state, dir_len + f_len + 2,
-					  line_buf->error_callback,
-					  line_buf->data));
-		    if (p == NULL)
-		      return 0;
-		    memcpy (p, dir, dir_len);
-		    /* FIXME: If we are on a DOS-based file system,
-		       and the directory or the file name use
-		       backslashes, then we should use a backslash
-		       here.  */
-		    p[dir_len] = '/';
-		    memcpy (p + dir_len + 1, f, f_len + 1);
-		    filename = p;
+
+        filename = build_abs_filename(state,
+             dir, f, line_buf->error_callback, line_buf->data);
 		  }
 	      }
 	      break;
@@ -4137,6 +4142,31 @@ dwarf_lookup_pc (struct backtrace_state *state, struct dwarf_data *ddata,
 
   ln = (struct line *) bsearch (&pc, lines, entry->u->lines_count,
 				sizeof (struct line), line_search);
+
+  if (entry->u->abs_filename == NULL)
+    {
+      const char *filename = NULL;
+
+      if (ln != NULL)
+        {
+          filename = ln->filename;
+        }
+
+      if (filename == NULL)
+        {
+          filename = entry->u->filename;
+        }
+
+      if (filename != NULL
+          && !IS_ABSOLUTE_PATH (filename)
+          && entry->u->comp_dir != NULL)
+        {
+          filename = build_abs_filename(state,
+               entry->u->comp_dir, filename, error_callback, data);
+        }
+      entry->u->abs_filename = filename;
+    }
+
   if (ln == NULL)
     {
       /* The PC is between the low_pc and high_pc attributes of the
@@ -4144,46 +4174,13 @@ dwarf_lookup_pc (struct backtrace_state *state, struct dwarf_data *ddata,
 	 This implies that the start of the compilation unit has no
 	 line number information.  */
 
-      if (entry->u->abs_filename == NULL)
-	{
-	  const char *filename;
-
-	  filename = entry->u->filename;
-	  if (filename != NULL
-	      && !IS_ABSOLUTE_PATH (filename)
-	      && entry->u->comp_dir != NULL)
-	    {
-	      size_t filename_len;
-	      const char *dir;
-	      size_t dir_len;
-	      char *s;
-
-	      filename_len = strlen (filename);
-	      dir = entry->u->comp_dir;
-	      dir_len = strlen (dir);
-	      s = (char *) backtrace_alloc (state, dir_len + filename_len + 2,
-					    error_callback, data);
-	      if (s == NULL)
-		{
-		  *found = 0;
-		  return 0;
-		}
-	      memcpy (s, dir, dir_len);
-	      /* FIXME: Should use backslash if DOS file system.  */
-	      s[dir_len] = '/';
-	      memcpy (s + dir_len + 1, filename, filename_len + 1);
-	      filename = s;
-	    }
-	  entry->u->abs_filename = filename;
-	}
-
       return callback (data, pc, entry->u->abs_filename, 0, NULL);
     }
 
   /* Search for function name within this unit.  */
 
   if (entry->u->function_addrs_count == 0)
-    return callback (data, pc, ln->filename, ln->lineno, NULL);
+    return callback (data, pc, entry->u->abs_filename, ln->lineno, NULL);
 
   p = ((struct function_addrs *)
        bsearch (&pc, entry->u->function_addrs,
@@ -4191,7 +4188,7 @@ dwarf_lookup_pc (struct backtrace_state *state, struct dwarf_data *ddata,
 		sizeof (struct function_addrs),
 		function_addrs_search));
   if (p == NULL)
-    return callback (data, pc, ln->filename, ln->lineno, NULL);
+    return callback (data, pc, entry->u->abs_filename, ln->lineno, NULL);
 
   /* Here pc >= p->low && pc < (p + 1)->low.  The function_addrs are
      sorted by low, so if pc > p->low we are at the end of a range of
@@ -4215,11 +4212,11 @@ dwarf_lookup_pc (struct backtrace_state *state, struct dwarf_data *ddata,
       --p;
     }
   if (fmatch == NULL)
-    return callback (data, pc, ln->filename, ln->lineno, NULL);
+    return callback (data, pc, entry->u->abs_filename, ln->lineno, NULL);
 
   function = fmatch->function;
 
-  filename = ln->filename;
+  filename = entry->u->abs_filename;
   lineno = ln->lineno;
 
   ret = report_inlined_functions (pc, function, callback, data,
